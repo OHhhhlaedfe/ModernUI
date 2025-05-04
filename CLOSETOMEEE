@@ -1,5 +1,5 @@
--- Modern UI Library for Roblox
--- Inspired by SIRIUS UI with smooth animations and lerp dragging
+-- Fixed Modern UI Library for Roblox
+-- Smooth animations and lerp dragging
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -105,12 +105,27 @@ function ModernUI.new(title)
     local self = setmetatable({}, ModernUI)
     
     -- Create ScreenGui
-    self.ScreenGui = createInstance("ScreenGui", {
-        Name = "ModernUI",
-        Parent = CoreGui,
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        ResetOnSpawn = false
-    })
+    local success, screenGui = pcall(function()
+        -- Try to create in CoreGui (works in most exploits)
+        return createInstance("ScreenGui", {
+            Name = "ModernUI",
+            Parent = CoreGui,
+            ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+            ResetOnSpawn = false
+        })
+    end)
+    
+    if not success then
+        -- Fallback to PlayerGui if CoreGui fails
+        screenGui = createInstance("ScreenGui", {
+            Name = "ModernUI",
+            Parent = Player:WaitForChild("PlayerGui"),
+            ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+            ResetOnSpawn = false
+        })
+    end
+    
+    self.ScreenGui = screenGui
     
     -- Create Main Frame
     self.MainFrame = createInstance("Frame", {
@@ -296,9 +311,11 @@ function ModernUI:SetupDragging()
             dragStart = input.Position
             startPos = self.MainFrame.Position
             
-            input.Changed:Connect(function()
+            local connection
+            connection = input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
+                    connection:Disconnect()
                 end
             end)
         end
@@ -318,7 +335,7 @@ function ModernUI:SetupDragging()
     end)
     
     -- Use RunService for smooth lerping
-    RunService.RenderStepped:Connect(function()
+    local renderSteppedConnection = RunService.RenderStepped:Connect(function()
         if dragging and targetPosition then
             self.MainFrame.Position = UDim2.new(
                 self.MainFrame.Position.X.Scale,
@@ -326,6 +343,13 @@ function ModernUI:SetupDragging()
                 self.MainFrame.Position.Y.Scale,
                 lerp(self.MainFrame.Position.Y.Offset, targetPosition.Y.Offset, settings.LerpFactor)
             )
+        end
+    end)
+    
+    -- Clean up connection when UI is destroyed
+    self.ScreenGui.AncestryChanged:Connect(function(_, parent)
+        if parent == nil then
+            renderSteppedConnection:Disconnect()
         end
     end)
 end
@@ -444,7 +468,8 @@ function ModernUI:CreateTab(name)
         ZIndex = 3,
         Visible = false,
         Parent = self.ContentFrame,
-        ClipsDescendants = true
+        ClipsDescendants = true,
+        AutomaticSize = Enum.AutomaticSize.Y
     })
     
     -- Create UIListLayout for tab content
@@ -594,13 +619,15 @@ function ModernUI:CreateTab(name)
             end)
             
             -- Button click effect (ripple)
-            button.MouseButton1Down:Connect(function(x, y)
+            button.MouseButton1Down:Connect(function()
+                local x, y = Mouse.X - button.AbsolutePosition.X, Mouse.Y - button.AbsolutePosition.Y
+                
                 local ripple = createInstance("Frame", {
                     Name = "Ripple",
                     AnchorPoint = Vector2.new(0.5, 0.5),
                     BackgroundColor3 = Color3.fromRGB(255, 255, 255),
                     BackgroundTransparency = 0.7,
-                    Position = UDim2.new(0, x - button.AbsolutePosition.X, 0, y - button.AbsolutePosition.Y),
+                    Position = UDim2.new(0, x, 0, y),
                     Size = UDim2.new(0, 0, 0, 0),
                     ZIndex = 7,
                     Parent = button
@@ -616,8 +643,8 @@ function ModernUI:CreateTab(name)
                     {Size = targetSize, BackgroundTransparency = 1}
                 ):Play()
                 
-                spawn(function()
-                    wait(0.5)
+                task.spawn(function()
+                    task.wait(0.5)
                     ripple:Destroy()
                 end)
                 
@@ -707,6 +734,12 @@ function ModernUI:CreateTab(name)
             
             -- Toggle click
             toggleContainer.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    updateToggle()
+                end
+            end)
+            
+            toggleButton.InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 then
                     updateToggle()
                 end
@@ -819,17 +852,8 @@ function ModernUI:CreateTab(name)
                 value = math.floor(min + (max - min) * sizeX)
                 
                 -- Update slider visuals
-                TweenService:Create(
-                    sliderFill, 
-                    createTweenInfo(0.1), 
-                    {Size = UDim2.new(sizeX, 0, 1, 0)}
-                ):Play()
-                
-                TweenService:Create(
-                    sliderKnob, 
-                    createTweenInfo(0.1), 
-                    {Position = UDim2.new(sizeX, 0, 0.5, 0)}
-                ):Play()
+                sliderFill.Size = UDim2.new(sizeX, 0, 1, 0)
+                sliderKnob.Position = UDim2.new(sizeX, 0, 0.5, 0)
                 
                 -- Update value display
                 valueDisplay.Text = tostring(value)
@@ -1037,7 +1061,7 @@ function ModernUI:CreateTab(name)
                         {Rotation = 0}
                     ):Play()
                     
-                    wait(0.3)
+                    task.wait(0.3)
                     dropdownList.Visible = false
                     
                     -- Call callback
@@ -1087,7 +1111,7 @@ function ModernUI:CreateTab(name)
                         {Rotation = 0}
                     ):Play()
                     
-                    wait(0.3)
+                    task.wait(0.3)
                     dropdownList.Visible = false
                 end
             end)
@@ -1126,96 +1150,6 @@ function ModernUI:CreateTab(name)
                     
                     -- Call callback
                     callback(selected)
-                end
-            end
-            
-            function dropdownFunctions:Refresh(newOptions, keepSelected)
-                options = newOptions or {}
-                
-                -- Clear old options
-                for _, child in ipairs(dropdownList:GetChildren()) do
-                    if child:IsA("TextButton") then
-                        child:Destroy()
-                    end
-                end
-                
-                -- Update selected
-                if not keepSelected or not table.find(options, selected) then
-                    selected = options[1] or ""
-                    dropdownButton.Text = selected
-                end
-                
-                -- Create new options
-                for _, option in ipairs(options) do
-                    local optionButton = createInstance("TextButton", {
-                        Name = option .. "Option",
-                        BackgroundColor3 = settings.MainColor,
-                        Size = UDim2.new(1, 0, 0, settings.ButtonHeight - 5),
-                        ZIndex = 11,
-                        Font = settings.TextFont,
-                        Text = option,
-                        TextColor3 = option == selected and settings.AccentColor or settings.TextColor,
-                        TextSize = 14,
-                        Parent = dropdownList
-                    })
-                    
-                    createCorner(optionButton)
-                    
-                    -- Option hover effect
-                    optionButton.MouseEnter:Connect(function()
-                        if option ~= selected then
-                            TweenService:Create(
-                                optionButton, 
-                                createTweenInfo(), 
-                                {BackgroundColor3 = Color3.fromRGB(50, 50, 55)}
-                            ):Play()
-                        end
-                    end)
-                    
-                    optionButton.MouseLeave:Connect(function()
-                        if option ~= selected then
-                            TweenService:Create(
-                                optionButton, 
-                                createTweenInfo(), 
-                                {BackgroundColor3 = settings.MainColor}
-                            ):Play()
-                        end
-                    end)
-                    
-                    -- Option click
-                    optionButton.MouseButton1Click:Connect(function()
-                        selected = option
-                        dropdownButton.Text = option
-                        
-                        -- Update option colors
-                        for _, child in ipairs(dropdownList:GetChildren()) do
-                            if child:IsA("TextButton") then
-                                child.TextColor3 = child.Text == selected and settings.AccentColor or settings.TextColor
-                            end
-                        end
-                        
-                        -- Close dropdown
-                        open = false
-                        
-                        -- Animate dropdown closing
-                        TweenService:Create(
-                            dropdownList, 
-                            createTweenInfo(), 
-                            {Size = UDim2.new(1, 0, 0, 0)}
-                        ):Play()
-                        
-                        TweenService:Create(
-                            dropdownArrow, 
-                            createTweenInfo(), 
-                            {Rotation = 0}
-                        ):Play()
-                        
-                        wait(0.3)
-                        dropdownList.Visible = false
-                        
-                        -- Call callback
-                        callback(selected)
-                    end)
                 end
             end
             
